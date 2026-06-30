@@ -745,10 +745,31 @@ async function fetchQ(sym){
     const res=d?.chart?.result?.[0]; if(!res) return null;
     const m=res.meta;
     const q=res.indicators?.quote?.[0]||{};
-    // ★ 昨收修正：用歷史K棒倒數第二根，絕對正確
-    const cls=(q.close||[]).filter(v=>v!=null&&!isNaN(v));
-    const histPrev = cls.length>=2 ? cls[cls.length-2] : null;
-    const prevClose = histPrev || m.chartPreviousClose || m.previousClose;
+    const ts=res.timestamp||[];
+    // ★ 昨收修正：盤中時最後一筆K棒(今天)的close常是null，過濾null會造成位移錯誤
+    // 改用「最後一個有效收盤值是否等於今天日期」來判斷，而非單純filter+取倒數第二
+    const rawCloses = q.close||[];
+    const todayStr = new Date().toDateString();
+    let prevClose = null;
+    // 從最後往前找：如果最後一筆有值且時間戳是今天，那它是"今天"，要跳過取它前一筆
+    // 如果最後一筆是null(盤中代表今天還沒收)，直接往前找第一個非null的就是昨收
+    let idx = rawCloses.length - 1;
+    // 跳過 trailing null（盤中未收盤的今天）
+    while(idx >= 0 && rawCloses[idx] == null) idx--;
+    if(idx >= 0){
+      const lastBarDate = ts[idx] ? new Date(ts[idx]*1000).toDateString() : null;
+      const isLastBarToday = lastBarDate === todayStr;
+      if(isLastBarToday){
+        // 最後一筆有值且是今天 -> 它是今天收盤，往前一筆才是昨收
+        let j = idx - 1;
+        while(j >= 0 && rawCloses[j] == null) j--;
+        prevClose = j >= 0 ? rawCloses[j] : null;
+      } else {
+        // 最後一筆不是今天 -> 它本身就是昨收（今天還沒走完一根K棒）
+        prevClose = rawCloses[idx];
+      }
+    }
+    prevClose = prevClose || m.chartPreviousClose || m.previousClose;
     let pe=m.trailingPE, pb=m.priceToBook, divY=m.dividendYield;
     const code=t.replace(/\.(TW|TWO)$/i,'');
     if(/^\d{4,6}$/.test(code)&&(!pe||!pb)){
